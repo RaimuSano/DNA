@@ -166,7 +166,7 @@
     const START_SCROLL_Y = -1.5;
     let scrollY = START_SCROLL_Y;
     
-    const INITIAL_SPEED = 0.03;
+    const INITIAL_SPEED = 0.04;
     let baseSpeed = INITIAL_SPEED;
     let activeIndex = 0;
     let globalRungCount = 0;
@@ -370,7 +370,7 @@
         score++;
         document.getElementById('score-val').innerText = score;
 
-        baseSpeed *= 1.04;
+        baseSpeed *= 1.02;
 
         activeRung.userData.filled = true;
 
