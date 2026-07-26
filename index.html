@@ -162,11 +162,12 @@
     const RADIUS = 2.5;
     const TWIST = 0.35;
     
-    // 初期位置の設定（位置を下げるためにSTART_SCROLL_Yを調整）
+    // 初期位置の設定
     const START_SCROLL_Y = -1.5;
     let scrollY = START_SCROLL_Y;
     
-    const INITIAL_SPEED = 0.02;
+    // スピードの調整（少し速めに設定）
+    const INITIAL_SPEED = 0.04;
     let baseSpeed = INITIAL_SPEED;
     let activeIndex = 0;
     let globalRungCount = 0;
@@ -185,7 +186,6 @@
     function init() {
       scene = new THREE.Scene();
       camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-      // カメラ位置を少し高く、引くことで全体の位置感を下げて見やすく調整
       camera.position.set(0, 1.0, 9.5);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -203,9 +203,30 @@
       helixGroup = new THREE.Group();
       scene.add(helixGroup);
 
+      // デッドライン（危険ライン）の描画
+      createDangerLine();
+
       buildInitialHelix();
 
       window.addEventListener('resize', onWindowResize);
+    }
+
+    // デッドラインを表示する関数
+    function createDangerLine() {
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-6, DANGER_Y, 0),
+        new THREE.Vector3(6, DANGER_Y, 0)
+      ]);
+      const lineMat = new THREE.LineDashedMaterial({
+        color: 0xff4444,
+        dashSize: 0.3,
+        gapSize: 0.2,
+        transparent: true,
+        opacity: 0.5
+      });
+      const dangerLine = new THREE.Line(lineGeo, lineMat);
+      dangerLine.computeLineDistances(); // 点線表示を有効化
+      scene.add(dangerLine);
     }
 
     function createTextTexture(text) {
@@ -335,7 +356,7 @@
         score++;
         document.getElementById('score-val').innerText = score;
 
-        baseSpeed *= 1.03; // スピードアップ
+        baseSpeed *= 1.04; // 徐々にスピードアップ
 
         activeRung.userData.filled = true;
 
@@ -406,7 +427,6 @@
     function animate() {
       requestAnimationFrame(animate);
 
-      // スタート後、かつゲームオーバーでない時だけ動かす
       if (isGameStarted && !isGameOver) {
         scrollY += baseSpeed;
         helixGroup.position.y = scrollY;
