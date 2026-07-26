@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>DNA Sequence Match Game</title>
+  <style>
+    * {
+      touch-action: manipulation; /* 連打でのズームを防止 */
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #050505;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #ui-container {
+      position: absolute;
+      top: env(safe-area-inset-top, 20px);
+      left: 20px;
+      color: white;
+      text-shadow: 0 0 5px rgba(0,0,0,0.8);
+      pointer-events: none;
+      z-index: 10;
+    }
+    #score-label {
+      font-size: 14px;
+      opacity: 0.8;
+    }
+    #score-val {
+      font-size: 32px;
+      font-weight: bold;
+    }
+    
+    /* スマホ向けボタンエリア */
+    #controls {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 140px;
+      display: flex;
+      justify-content: space-around;
+      align-items: flex-end;
+      padding: 0 10px calc(10px + env(safe-area-inset-bottom, 0px));
+      box-sizing: border-box;
+      background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
+      z-index: 10;
+    }
+    .btn {
+      width: 22%;
+      height: 100px;
+      border: none;
+      border-radius: 16px;
+      font-size: 28px;
+      font-weight: bold;
+      color: white;
+      cursor: pointer;
+      outline: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      transition: transform 0.05s, filter 0.05s;
+    }
+    .btn:active {
+      transform: scale(0.95);
+      filter: brightness(1.2);
+    }
+    #btn-A { background: linear-gradient(180deg, #38bdf8, #0284c7); }
+    #btn-T { background: linear-gradient(180deg, #4ade80, #16a34a); }
+    #btn-G { background: linear-gradient(180deg, #f87171, #dc2626); }
+    #btn-C { background: linear-gradient(180deg, #facc15, #ca8a04); }
+
+    /* ゲームオーバー表示 */
+    #game-over {
+      display: none;
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      z-index: 20;
+    }
+    #game-over h1 { font-size: 36px; margin-bottom: 10px; color: #f87171; }
+    #restart-btn {
+      margin-top: 20px;
+      padding: 14px 36px;
+      font-size: 20px;
+      border-radius: 30px;
+      border: none;
+      background: #38bdf8;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+  <div id="ui-container">
+    <div id="score-label">🏆 High Score: <span id="high-score">0</span></div>
+    <div id="score-val">0</div>
+  </div>
+
+  <div id="controls">
+    <button class="btn" id="btn-A" ontouchstart="handleTouch(event, 'A')" onclick="handleClick('A')">A</button>
+    <button class="btn" id="btn-T" ontouchstart="handleTouch(event, 'T')" onclick="handleClick('T')">T</button>
+    <button class="btn" id="btn-G" ontouchstart="handleTouch(event, 'G')" onclick="handleClick('G')">G</button>
+    <button class="btn" id="btn-C" ontouchstart="handleTouch(event, 'C')" onclick="handleClick('C')">C</button>
+  </div>
+
+  <div id="game-over">
+    <h1>GAME OVER</h1>
+    <p>Final Score: <span id="final-score">0</span></p>
+    <button id="restart-btn" ontouchstart="resetGame()" onclick="resetGame()">Try Again</button>
+  </div>
+
+  <script>
+    const PAIRS = { 'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G' };
+    const COLORS = {
+      'A': 0x38bdf8,
+      'T': 0x4ade80,
+      'G': 0xf87171,
+      'C': 0xfacc15
+    };
+    const BASES = ['A', 'T', 'G', 'C'];
+
+    let scene, camera, renderer;
+    let helixGroup;
+    let rungs = [];
+    let score = 0;
+    let highScore = 0;
+    let isGameOver = false;
+
+    const STEP_Y = 1.2;
+    const RADIUS = 2.5;
+    const TWIST = 0.35;
+    
+    let scrollY = 0;
+    const INITIAL_SPEED = 0.05;
+    let baseSpeed = INITIAL_SPEED;
+    let activeIndex = 0;
+    let globalRungCount = 0;
+
+    let currentRotationY = 0;
+    let targetRotationY = 0;
+
+    const CENTER_OFFSET = 0.5;
+    const DANGER_Y = 3.2;
+
+    let isTouchHandled = false;
+
+    init();
+    animate();
+
+    function init() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 0.5, 9.0);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      document.body.appendChild(renderer.domElement);
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+      scene.add(ambientLight);
+
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+      dirLight.position.set(5, 10, 7);
+      scene.add(dirLight);
+
+      helixGroup = new THREE.Group();
+      scene.add(helixGroup);
+
+      buildInitialHelix();
+
+      window.addEventListener('resize', onWindowResize);
+    }
+
+    function createTextTexture(text) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128; canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = "white";
+      ctx.font = "Bold 80px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, 64, 64);
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    function createRung(index) {
+      const rungGroup = new THREE.Group();
+      const angle = index * TWIST;
+      
+      const localY = -index * STEP_Y + CENTER_OFFSET;
+
+      rungGroup.position.set(0, localY, 0);
+      rungGroup.rotation.y = angle;
+
+      const leftBase = BASES[Math.floor(Math.random() * BASES.length)];
+      const sphereGeo = new THREE.SphereGeometry(0.38, 16, 16);
+      
+      const sphereMatL = new THREE.MeshStandardMaterial({ color: 0x8b5cf6, roughness: 0.3 });
+      const sphereL = new THREE.Mesh(sphereGeo, sphereMatL);
+      sphereL.position.set(-RADIUS, 0, 0);
+      rungGroup.add(sphereL);
+
+      const sphereMatR = new THREE.MeshStandardMaterial({ color: 0x444444, transparent: true, opacity: 0.3, wireframe: true });
+      const sphereR = new THREE.Mesh(sphereGeo, sphereMatR);
+      sphereR.position.set(RADIUS, 0, 0);
+      sphereR.name = "targetSphere";
+      rungGroup.add(sphereR);
+
+      const boxGeo = new THREE.BoxGeometry(2.0, 0.4, 0.2);
+      const matL = new THREE.MeshStandardMaterial({ color: COLORS[leftBase] });
+      const boxL = new THREE.Mesh(boxGeo, matL);
+      boxL.position.set(-RADIUS / 2 + 0.2, 0, 0);
+
+      const textGeo = new THREE.PlaneGeometry(0.6, 0.6);
+      const textMatL = new THREE.MeshBasicMaterial({ map: createTextTexture(leftBase), transparent: true });
+      const textMeshL = new THREE.Mesh(textGeo, textMatL);
+      textMeshL.position.set(0, 0, 0.11);
+      boxL.add(textMeshL);
+
+      rungGroup.add(boxL);
+
+      const matR = new THREE.MeshStandardMaterial({ color: 0x222222, transparent: true, opacity: 0.6 });
+      const boxR = new THREE.Mesh(boxGeo, matR);
+      boxR.position.set(RADIUS / 2 - 0.2, 0, 0);
+      boxR.name = "targetBox";
+      rungGroup.add(boxR);
+
+      const outlineGeo = new THREE.BoxGeometry(2.1, 0.5, 0.25);
+      const outlineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, visible: false });
+      const outline = new THREE.Mesh(outlineGeo, outlineMat);
+      outline.name = "highlight";
+      boxR.add(outline);
+
+      rungGroup.userData = { 
+        leftBase: leftBase, 
+        globalIndex: index, 
+        filled: false,
+        initialY: localY,
+        angle: angle
+      };
+
+      helixGroup.add(rungGroup);
+      rungs.push(rungGroup);
+    }
+
+    function buildInitialHelix() {
+      globalRungCount = 0;
+      for (let i = 0; i < 20; i++) {
+        createRung(globalRungCount++);
+      }
+      updateHighlight();
+    }
+
+    function updateHighlight() {
+      rungs.forEach((rung) => {
+        const targetBox = rung.getObjectByName("targetBox");
+        const highlight = targetBox.getObjectByName("highlight");
+        if (rung.userData.globalIndex === activeIndex) {
+          highlight.material.visible = true;
+          highlight.material.color.setHex(0x00ffff);
+          
+          targetRotationY = -rung.userData.angle;
+        } else {
+          highlight.material.visible = false;
+        }
+      });
+    }
+
+    // スマホのタッチとPCのクリックの重複実行を防ぐイベントハンドラ
+    function handleTouch(e, inputBase) {
+      e.preventDefault();
+      isTouchHandled = true;
+      handleInput(inputBase);
+    }
+
+    function handleClick(inputBase) {
+      if (isTouchHandled) {
+        isTouchHandled = false;
+        return;
+      }
+      handleInput(inputBase);
+    }
+
+    function handleInput(inputBase) {
+      if (isGameOver) return;
+
+      const activeRung = rungs.find(r => r.userData.globalIndex === activeIndex);
+      if (!activeRung) return;
+
+      const correctTarget = PAIRS[activeRung.userData.leftBase];
+
+      if (inputBase === correctTarget) {
+        score++;
+        document.getElementById('score-val').innerText = score;
+
+        baseSpeed *= 1.03; // スピードアップ
+
+        activeRung.userData.filled = true;
+
+        const targetBox = activeRung.getObjectByName("targetBox");
+        targetBox.material.color.setHex(COLORS[inputBase]);
+        targetBox.material.opacity = 1.0;
+
+        const targetSphere = activeRung.getObjectByName("targetSphere");
+        targetSphere.material = new THREE.MeshStandardMaterial({ color: 0x8b5cf6, roughness: 0.3 });
+
+        const highlight = targetBox.getObjectByName("highlight");
+        highlight.material.visible = false;
+
+        const textGeo = new THREE.PlaneGeometry(0.6, 0.6);
+        const textMat = new THREE.MeshBasicMaterial({ map: createTextTexture(inputBase), transparent: true });
+        const textMesh = new THREE.Mesh(textGeo, textMat);
+        textMesh.position.set(0, 0, 0.11);
+        targetBox.add(textMesh);
+
+        activeIndex++;
+        updateHighlight();
+
+        createRung(globalRungCount++);
+
+      } else {
+        triggerGameOver();
+      }
+    }
+
+    function triggerGameOver() {
+      isGameOver = true;
+      if (score > highScore) {
+        highScore = score;
+        document.getElementById('high-score').innerText = highScore;
+      }
+      document.getElementById('final-score').innerText = score;
+      document.getElementById('game-over').style.display = 'flex';
+    }
+
+    function resetGame() {
+      isGameOver = false;
+      score = 0;
+      scrollY = 0;
+      baseSpeed = INITIAL_SPEED;
+      activeIndex = 0;
+      currentRotationY = 0;
+      targetRotationY = 0;
+      helixGroup.position.y = 0;
+      helixGroup.rotation.y = 0;
+
+      document.getElementById('score-val').innerText = score;
+      document.getElementById('game-over').style.display = 'none';
+
+      rungs.forEach(r => helixGroup.remove(r));
+      rungs = [];
+
+      buildInitialHelix();
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (!isGameOver) {
+        scrollY += baseSpeed;
+        helixGroup.position.y = scrollY;
+
+        currentRotationY += (targetRotationY - currentRotationY) * 0.08;
+        helixGroup.rotation.y = currentRotationY;
+
+        const activeRung = rungs.find(r => r.userData.globalIndex === activeIndex);
+        if (activeRung) {
+          const targetBox = activeRung.getObjectByName("targetBox");
+          const highlight = targetBox.getObjectByName("highlight");
+          if (highlight) {
+            const scale = 1 + Math.sin(Date.now() * 0.01) * 0.08;
+            highlight.scale.set(scale, scale, scale);
+          }
+
+          const currentWorldY = activeRung.position.y + scrollY;
+          if (currentWorldY > DANGER_Y) {
+            triggerGameOver();
+          }
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
