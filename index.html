@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>DNA Sequence Match Game</title>
+  <title>DNA Sequence Match Game 3D - View Mode</title>
   <style>
     * {
-      touch-action: manipulation; /* 連打でのズームを防止 */
+      touch-action: manipulation;
       -webkit-tap-highlight-color: transparent;
     }
     html, body {
@@ -19,6 +19,14 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       user-select: none;
       -webkit-user-select: none;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
     }
     #ui-container {
       position: absolute;
@@ -38,7 +46,6 @@
       font-weight: bold;
     }
     
-    /* スマホ向けボタンエリア */
     #controls {
       position: absolute;
       bottom: 0;
@@ -78,7 +85,6 @@
     #btn-G { background: linear-gradient(180deg, #f87171, #dc2626); }
     #btn-C { background: linear-gradient(180deg, #facc15, #ca8a04); }
 
-    /* スタート画面 & ゲームオーバー画面共通オーバーレイ */
     .overlay {
       position: absolute;
       top: 0; left: 0; width: 100%; height: 100%;
@@ -89,15 +95,22 @@
       align-items: center;
       color: white;
       z-index: 20;
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
     }
     .overlay h1 { font-size: 36px; margin-bottom: 10px; text-align: center; }
     #game-over h1 { color: #f87171; }
     #start-screen h1 { color: #38bdf8; }
     
-    .action-btn {
+    .button-group {
+      display: flex;
+      gap: 12px;
       margin-top: 20px;
-      padding: 16px 48px;
-      font-size: 22px;
+    }
+
+    .action-btn {
+      padding: 14px 36px;
+      font-size: 20px;
       border-radius: 30px;
       border: none;
       background: #38bdf8;
@@ -105,15 +118,48 @@
       font-weight: bold;
       cursor: pointer;
       box-shadow: 0 4px 15px rgba(56, 189, 248, 0.4);
-      transition: transform 0.1s;
+      transition: transform 0.1s, background-color 0.2s;
     }
     .action-btn:active {
       transform: scale(0.95);
     }
+    .action-btn.secondary {
+      background: #475569;
+      box-shadow: 0 4px 15px rgba(71, 85, 105, 0.4);
+    }
+
+    /* 3D Viewモード時の操作ガイドUI */
+    #view-ui {
+      position: absolute;
+      bottom: 30px;
+      left: 0;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      z-index: 30;
+      pointer-events: none;
+    }
+    #view-ui .action-btn {
+      pointer-events: auto;
+    }
+    #view-hint {
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 14px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 6px 16px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- 3Dモデルをドラッグ操作するためのOrbitControls -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
+
+  <div id="canvas-container"></div>
 
   <div id="ui-container">
     <div id="score-label">🏆 High Score: <span id="high-score">0</span></div>
@@ -127,17 +173,27 @@
     <button class="btn" id="btn-C" ontouchstart="handleTouch(event, 'C')" onclick="handleClick('C')">C</button>
   </div>
 
-  <!-- スタート画面 -->
   <div id="start-screen" class="overlay">
-    <h1>DNA Sequence<br>Match Game</h1>
+    <h1>DNA Sequence<br>Match Game 3D</h1>
     <button class="action-btn" ontouchstart="startGame()" onclick="startGame()">START</button>
   </div>
 
-  <!-- ゲームオーバー画面 -->
   <div id="game-over" class="overlay" style="display: none;">
     <h1>GAME OVER</h1>
     <p>Final Score: <span id="final-score">0</span></p>
-    <button class="action-btn" ontouchstart="resetGame()" onclick="resetGame()">Try Again</button>
+    <div class="button-group">
+      <button class="action-btn secondary" ontouchstart="show3DView()" onclick="show3DView()">3D View</button>
+      <button class="action-btn" ontouchstart="resetGame()" onclick="resetGame()">Try Again</button>
+    </div>
+  </div>
+
+  <!-- 3D Viewモード用UI -->
+  <div id="view-ui" style="display: none;">
+    <div id="view-hint">🖱️ Drag to rotate / Scroll to zoom</div>
+    <div class="button-group">
+      <button class="action-btn secondary" ontouchstart="exit3DView()" onclick="exit3DView()">Back</button>
+      <button class="action-btn" ontouchstart="resetGame()" onclick="resetGame()">Try Again</button>
+    </div>
   </div>
 
   <script>
@@ -150,34 +206,28 @@
     };
     const BASES = ['A', 'T', 'G', 'C'];
 
-    let scene, camera, renderer;
-    let helixGroup;
+    let scene, camera, renderer, controls;
+    let helixGroup, dangerZoneGroup;
     let rungs = [];
     let score = 0;
     let highScore = 0;
     let isGameOver = false;
-    let isGameStarted = false; // スタート判定フラグ
+    let isGameStarted = false;
+    let is3DViewMode = false;
 
     const STEP_Y = 1.2;
     const RADIUS = 2.5;
     const TWIST = 0.35;
-    
-    // 初期位置の設定
     const START_SCROLL_Y = -1.5;
     let scrollY = START_SCROLL_Y;
-    
     const INITIAL_SPEED = 0.02;
     let baseSpeed = INITIAL_SPEED;
     let activeIndex = 0;
     let globalRungCount = 0;
-
     let currentRotationY = 0;
     let targetRotationY = 0;
-
     const CENTER_OFFSET = 0.5;
-    // 危険ラインの位置を少し高め（4.2）に変更
     const DANGER_Y = 4.2;
-
     let isTouchHandled = false;
 
     init();
@@ -191,7 +241,13 @@
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      document.body.appendChild(renderer.domElement);
+      document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+      // OrbitControlsのセットアップ (3D視点操作用)
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enabled = false; // ゲーム中は無効化
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
       scene.add(ambientLight);
@@ -203,7 +259,8 @@
       helixGroup = new THREE.Group();
       scene.add(helixGroup);
 
-      // 危険ゾーン（赤い領域）の描画
+      dangerZoneGroup = new THREE.Group();
+      scene.add(dangerZoneGroup);
       createDangerZone();
 
       buildInitialHelix();
@@ -211,9 +268,7 @@
       window.addEventListener('resize', onWindowResize);
     }
 
-    // 危険ゾーンを表示する関数
     function createDangerZone() {
-      // 危険領域の面（半透明の赤）
       const zoneGeo = new THREE.PlaneGeometry(16, 4);
       const zoneMat = new THREE.MeshBasicMaterial({
         color: 0xff0055,
@@ -222,11 +277,9 @@
         side: THREE.DoubleSide
       });
       const zoneMesh = new THREE.Mesh(zoneGeo, zoneMat);
-      // DANGER_Y より上の領域を覆うように位置を配置
       zoneMesh.position.set(0, DANGER_Y + 2.0, 0);
-      scene.add(zoneMesh);
+      dangerZoneGroup.add(zoneMesh);
 
-      // 危険領域の境界線（破線）
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(-8, DANGER_Y, 0),
         new THREE.Vector3(8, DANGER_Y, 0)
@@ -240,7 +293,7 @@
       });
       const dangerLine = new THREE.Line(lineGeo, lineMat);
       dangerLine.computeLineDistances();
-      scene.add(dangerLine);
+      dangerZoneGroup.add(dangerLine);
     }
 
     function createTextTexture(text) {
@@ -258,9 +311,7 @@
     function createRung(index) {
       const rungGroup = new THREE.Group();
       const angle = index * TWIST;
-      
       const localY = -index * STEP_Y + CENTER_OFFSET;
-
       rungGroup.position.set(0, localY, 0);
       rungGroup.rotation.y = angle;
 
@@ -288,7 +339,6 @@
       const textMeshL = new THREE.Mesh(textGeo, textMatL);
       textMeshL.position.set(0, 0, 0.11);
       boxL.add(textMeshL);
-
       rungGroup.add(boxL);
 
       const matR = new THREE.MeshStandardMaterial({ color: 0x222222, transparent: true, opacity: 0.6 });
@@ -306,7 +356,6 @@
       rungGroup.userData = { 
         leftBase: leftBase, 
         globalIndex: index, 
-        filled: false,
         initialY: localY,
         angle: angle
       };
@@ -331,7 +380,6 @@
         if (rung.userData.globalIndex === activeIndex) {
           highlight.material.visible = true;
           highlight.material.color.setHex(0x00ffff);
-          
           targetRotationY = -rung.userData.angle;
         } else {
           highlight.material.visible = false;
@@ -359,7 +407,7 @@
     }
 
     function handleInput(inputBase) {
-      if (!isGameStarted || isGameOver) return;
+      if (!isGameStarted || isGameOver || is3DViewMode) return;
 
       const activeRung = rungs.find(r => r.userData.globalIndex === activeIndex);
       if (!activeRung) return;
@@ -371,8 +419,6 @@
         document.getElementById('score-val').innerText = score;
 
         baseSpeed *= 1.01;
-
-        activeRung.userData.filled = true;
 
         const targetBox = activeRung.getObjectByName("targetBox");
         targetBox.material.color.setHex(COLORS[inputBase]);
@@ -392,7 +438,6 @@
 
         activeIndex++;
         updateHighlight();
-
         createRung(globalRungCount++);
 
       } else {
@@ -410,7 +455,55 @@
       document.getElementById('game-over').style.display = 'flex';
     }
 
+    // 3D Viewモードを開始
+    function show3DView() {
+      is3DViewMode = true;
+      document.getElementById('game-over').style.display = 'none';
+      document.getElementById('ui-container').style.display = 'none';
+      document.getElementById('controls').style.display = 'none';
+      document.getElementById('view-ui').style.display = 'flex';
+
+      dangerZoneGroup.visible = false; // 邪魔な危険ゾーンを非表示
+
+      // 未結合（未複製）の梯子ステップを隠して、自分が完成させた部分だけにフォーカス
+      rungs.forEach(r => {
+        if (r.userData.globalIndex >= activeIndex) {
+          r.visible = false;
+        }
+      });
+
+      // 複製したDNAの中心位置を計算してカメラのターゲットに設定
+      const centerIndex = Math.max(0, (activeIndex - 1) / 2);
+      const centerY = helixGroup.position.y - centerIndex * STEP_Y + CENTER_OFFSET;
+
+      controls.target.set(0, centerY, 0);
+      camera.position.set(0, centerY, 12);
+      controls.enabled = true;
+      controls.update();
+    }
+
+    // 3D Viewモードを終了
+    function exit3DView() {
+      is3DViewMode = false;
+      controls.enabled = false;
+
+      // 隠していた要素を元に戻す
+      rungs.forEach(r => r.visible = true);
+      dangerZoneGroup.visible = true;
+
+      document.getElementById('view-ui').style.display = 'none';
+      document.getElementById('ui-container').style.display = 'block';
+      document.getElementById('controls').style.display = 'flex';
+      document.getElementById('game-over').style.display = 'flex';
+
+      // カメラを元の固定視点に戻す
+      camera.position.set(0, 1.0, 9.5);
+      camera.lookAt(0, 0, 0);
+    }
+
     function resetGame() {
+      is3DViewMode = false;
+      controls.enabled = false;
       isGameOver = false;
       score = 0;
       scrollY = START_SCROLL_Y;
@@ -418,16 +511,23 @@
       activeIndex = 0;
       currentRotationY = 0;
       targetRotationY = 0;
+
       helixGroup.position.y = START_SCROLL_Y;
       helixGroup.rotation.y = 0;
 
+      camera.position.set(0, 1.0, 9.5);
+      camera.lookAt(0, 0, 0);
+
+      dangerZoneGroup.visible = true;
+
       document.getElementById('score-val').innerText = score;
       document.getElementById('game-over').style.display = 'none';
+      document.getElementById('view-ui').style.display = 'none';
+      document.getElementById('ui-container').style.display = 'block';
+      document.getElementById('controls').style.display = 'flex';
 
-      // 既存オブジェクトのクリア
       rungs.forEach(r => helixGroup.remove(r));
       rungs = [];
-
       buildInitialHelix();
       isGameStarted = true;
     }
@@ -441,10 +541,13 @@
     function animate() {
       requestAnimationFrame(animate);
 
-      if (isGameStarted && !isGameOver) {
+      if (is3DViewMode) {
+        // Viewモード中はOrbitControlsによるカメラ操作を更新
+        controls.update();
+      } else if (isGameStarted && !isGameOver) {
+        // 通常のゲーム進行処理
         scrollY += baseSpeed;
         helixGroup.position.y = scrollY;
-
         currentRotationY += (targetRotationY - currentRotationY) * 0.08;
         helixGroup.rotation.y = currentRotationY;
 
@@ -456,14 +559,12 @@
             const scale = 1 + Math.sin(Date.now() * 0.01) * 0.08;
             highlight.scale.set(scale, scale, scale);
           }
-
           const currentWorldY = activeRung.position.y + scrollY;
           if (currentWorldY > DANGER_Y) {
             triggerGameOver();
           }
         }
       }
-
       renderer.render(scene, camera);
     }
   </script>
